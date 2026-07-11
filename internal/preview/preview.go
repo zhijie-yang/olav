@@ -7,6 +7,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 const MaxPreviewBytes = 2 << 20
@@ -22,6 +24,7 @@ type Preview struct {
 	Text          bool
 	Truncated     bool
 	Scroll        int
+	HScroll       int
 	Search        string
 	SearchMatches []int
 	CurrentMatch  int
@@ -256,7 +259,26 @@ func (p *Preview) ScrollBy(delta, height int) {
 	}
 }
 
-func (p *Preview) Visible(height int) []string {
+func (p *Preview) ScrollHoriz(delta, width int) {
+	p.HScroll += delta
+	max := p.maxLineWidth() - width
+	if max < 0 {
+		max = 0
+	}
+	if p.HScroll < 0 {
+		p.HScroll = 0
+	}
+	if p.HScroll > max {
+		p.HScroll = max
+	}
+}
+
+func (p *Preview) SetHScroll(offset, width int) {
+	p.HScroll = offset
+	p.ScrollHoriz(0, width)
+}
+
+func (p *Preview) Visible(height, width int) []string {
 	if height < 0 {
 		height = 0
 	}
@@ -267,5 +289,30 @@ func (p *Preview) Visible(height int) []string {
 	if p.Scroll > end {
 		return nil
 	}
-	return p.Lines[p.Scroll:end]
+	lines := p.Lines[p.Scroll:end]
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		out = append(out, p.visibleLine(line, width))
+	}
+	return out
+}
+
+func (p *Preview) visibleLine(line string, width int) string {
+	if width < 1 {
+		return ""
+	}
+	if p.HScroll == 0 {
+		return ansi.Truncate(line, width, "")
+	}
+	return ansi.Truncate(ansi.TruncateLeft(line, p.HScroll, ""), width, "")
+}
+
+func (p *Preview) maxLineWidth() int {
+	max := 0
+	for _, line := range p.Lines {
+		if w := ansi.StringWidth(line); w > max {
+			max = w
+		}
+	}
+	return max
 }

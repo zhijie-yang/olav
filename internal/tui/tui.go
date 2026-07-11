@@ -112,10 +112,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.togglePretty()
 		case "e":
 			m.exportSelected()
-		case "enter", "right", "l":
+		case "enter":
 			m.openOrExpand()
+		case "right", "l":
+			if m.focus == focusPreview || m.focus == focusInnerPreview {
+				m.scrollPreviewHoriz(8)
+			} else {
+				m.openOrExpand()
+			}
 		case "left", "h":
-			m.collapse()
+			if m.focus == focusPreview || m.focus == focusInnerPreview {
+				m.scrollPreviewHoriz(-8)
+			} else {
+				m.collapse()
+			}
 		case "j", "down":
 			m.move(1)
 		case "k", "up":
@@ -124,6 +134,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.goTop()
 		case "G":
 			m.goBottom()
+		case "0":
+			m.goLineStart()
+		case "$":
+			m.goLineEnd()
 		case "pgdown", " ", "f":
 			m.scrollPreview(m.previewHeight())
 		case "pgup", "b":
@@ -440,6 +454,39 @@ func (m *Model) scrollPreview(delta int) {
 	}
 }
 
+func (m *Model) scrollPreviewHoriz(delta int) {
+	width := m.previewContentWidth()
+	if m.focus == focusInnerPreview && m.innerPreview != nil {
+		m.innerPreview.ScrollHoriz(delta, width)
+		m.status = fmt.Sprintf("column %d", m.innerPreview.HScroll+1)
+	} else if m.preview != nil {
+		m.preview.ScrollHoriz(delta, width)
+		m.status = fmt.Sprintf("column %d", m.preview.HScroll+1)
+	}
+}
+
+func (m *Model) goLineStart() {
+	width := m.previewContentWidth()
+	if m.focus == focusInnerPreview && m.innerPreview != nil {
+		m.innerPreview.SetHScroll(0, width)
+		m.status = "column 1"
+	} else if m.focus == focusPreview && m.preview != nil {
+		m.preview.SetHScroll(0, width)
+		m.status = "column 1"
+	}
+}
+
+func (m *Model) goLineEnd() {
+	width := m.previewContentWidth()
+	if m.focus == focusInnerPreview && m.innerPreview != nil {
+		m.innerPreview.SetHScroll(1<<30, width)
+		m.status = fmt.Sprintf("column %d", m.innerPreview.HScroll+1)
+	} else if m.focus == focusPreview && m.preview != nil {
+		m.preview.SetHScroll(1<<30, width)
+		m.status = fmt.Sprintf("column %d", m.preview.HScroll+1)
+	}
+}
+
 func (m *Model) nextMatch(delta int) {
 	if m.focus == focusInnerPreview && m.innerPreview != nil {
 		m.innerPreview.NextMatch(delta)
@@ -517,7 +564,7 @@ func (m *Model) renderPreview(width, height int) string {
 	if m.preview.Notice != "" {
 		lines = append(lines, mutedStyle.Render(m.preview.Notice))
 	}
-	lines = append(lines, m.preview.Visible(max(1, contentH-len(lines)))...)
+	lines = append(lines, m.preview.Visible(max(1, contentH-len(lines)), contentW)...)
 	return pane(m.focus == focusPreview, width, height).Render(fixedBlock(lines, contentW, contentH))
 }
 
@@ -567,7 +614,7 @@ func (m *Model) renderInnerPreview(width, height int) string {
 	} else {
 		lines = append(lines, mutedStyle.Render("Raw text"))
 	}
-	lines = append(lines, m.innerPreview.Visible(max(1, contentH-len(lines)))...)
+	lines = append(lines, m.innerPreview.Visible(max(1, contentH-len(lines)), contentW)...)
 	return pane(m.focus == focusInnerPreview, width, height).Render(fixedBlock(lines, contentW, contentH))
 }
 
@@ -576,11 +623,15 @@ func pane(active bool, width, height int) lipgloss.Style {
 	if active {
 		style = focused
 	}
-	return style.Width(contentWidth(width)).Height(contentHeight(height)).MaxWidth(width).MaxHeight(height)
+	return style.Width(outerContentWidth(width)).Height(contentHeight(height)).MaxWidth(width)
 }
 
 func contentWidth(width int) int {
 	return max(1, width-4)
+}
+
+func outerContentWidth(width int) int {
+	return max(1, width-2)
 }
 
 func contentHeight(height int) int {
@@ -659,6 +710,15 @@ func (m *Model) indexOfLayer(p string) int {
 
 func (m *Model) previewHeight() int {
 	return max(1, m.height-8)
+}
+
+func (m *Model) previewContentWidth() int {
+	leftW := max(24, m.width/3)
+	if m.focus == focusInnerPreview && m.innerPreview != nil && m.currentLayer != nil {
+		midW := max(28, (m.width-leftW)/2)
+		return contentWidth(max(20, m.width-leftW-midW))
+	}
+	return contentWidth(max(24, m.width-leftW))
 }
 
 func max(a, b int) int {

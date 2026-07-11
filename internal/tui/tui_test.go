@@ -35,3 +35,77 @@ func TestViewDoesNotExceedWindow(t *testing.T) {
 		}
 	}
 }
+
+func TestLongRawPreviewUsesHorizontalScroll(t *testing.T) {
+	root := &oci.Node{Name: "/", Path: "/", IsDir: true}
+	longLine := []byte("alpha-" + strings.Repeat("middle-", 20) + "omega")
+	file := &oci.Node{Name: "config", Path: "/config", Data: longLine, Parent: root}
+	root.Children = []*oci.Node{file}
+	layout := &oci.Layout{InputPath: "fixture", Root: root, Files: map[string]*oci.Node{"/": root, "/config": file}}
+
+	m := New(layout)
+	m.width = 60
+	m.height = 16
+	m.selectOCI(1)
+	m.focus = focusPreview
+
+	view := m.View()
+	if !strings.Contains(view, "alpha-") {
+		t.Fatalf("expected start of long line in initial viewport:\n%s", view)
+	}
+	if strings.Contains(previewLine(view, "alpha-"), "…") {
+		t.Fatalf("raw preview line should not use ellipsis truncation:\n%s", view)
+	}
+	if strings.Contains(view, "omega") {
+		t.Fatalf("expected long line end to be outside initial viewport:\n%s", view)
+	}
+
+	m.scrollPreviewHoriz(1000)
+	view = m.View()
+	if !strings.Contains(view, "omega") {
+		t.Fatalf("expected horizontal scroll to reveal end of long line:\n%s", view)
+	}
+	assertViewFits(t, view, m.width, m.height)
+}
+
+func TestLongPreviewKeepsBottomBorder(t *testing.T) {
+	root := &oci.Node{Name: "/", Path: "/", IsDir: true}
+	file := &oci.Node{Name: "log.txt", Path: "/log.txt", Data: []byte(strings.Repeat("line\n", 100)), Parent: root}
+	root.Children = []*oci.Node{file}
+	layout := &oci.Layout{InputPath: "fixture", Root: root, Files: map[string]*oci.Node{"/": root, "/log.txt": file}}
+
+	m := New(layout)
+	m.width = 80
+	m.height = 20
+	m.selectOCI(1)
+	m.focus = focusPreview
+	m.goBottom()
+
+	view := m.View()
+	assertViewFits(t, view, m.width, m.height)
+	if !strings.Contains(view, "╰") || !strings.Contains(view, "╯") {
+		t.Fatalf("expected bottom border corners to be visible:\n%s", view)
+	}
+}
+
+func previewLine(view, marker string) string {
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, marker) {
+			return line
+		}
+	}
+	return ""
+}
+
+func assertViewFits(t *testing.T, view string, width, height int) {
+	t.Helper()
+	lines := strings.Split(view, "\n")
+	if len(lines) > height {
+		t.Fatalf("view height = %d, want <= %d\n%s", len(lines), height, view)
+	}
+	for i, line := range lines {
+		if w := ansi.StringWidth(line); w > width {
+			t.Fatalf("line %d width = %d, want <= %d: %q", i+1, w, width, line)
+		}
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"github.com/canonical/olav/internal/preview"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type focus int
@@ -141,12 +142,12 @@ func (m Model) View() string {
 		return ""
 	}
 	bodyH := max(1, m.height-3)
-	header := lipgloss.NewStyle().Width(m.width).Render("OCI-Layout Archive Visualizer (olav) " + m.layout.InputPath)
+	header := fixedLine("OCI-Layout Archive Visualizer (olav) "+m.layout.InputPath, m.width)
 	status := m.status
 	if m.searchMode {
 		status = "/" + m.searchQuery
 	}
-	footer := mutedStyle.Width(m.width).Render(status)
+	footer := mutedStyle.Render(fixedLine(status, m.width))
 
 	leftW := max(24, m.width/3)
 	if m.innerPreview != nil && m.currentLayer != nil {
@@ -482,8 +483,10 @@ func (m *Model) exportSelected() {
 }
 
 func (m *Model) renderOCI(width, height int) string {
+	contentW := contentWidth(width)
+	contentH := contentHeight(height)
 	lines := []string{headerStyle.Render("OCI Files")}
-	for i, row := range visibleTreeRows(m.ociRows, m.selectedOCI, height-2) {
+	for i, row := range visibleTreeRows(m.ociRows, m.selectedOCI, contentH-1) {
 		prefix := strings.Repeat("  ", row.depth)
 		marker := "  "
 		if row.node.IsDir {
@@ -499,21 +502,23 @@ func (m *Model) renderOCI(width, height int) string {
 		} else if i == 0 {
 			_ = i
 		}
-		lines = append(lines, line)
+		lines = append(lines, fixedLine(line, contentW))
 	}
-	return pane(m.focus == focusOCI, width, height).Render(strings.Join(lines, "\n"))
+	return pane(m.focus == focusOCI, width, height).Render(fixedBlock(lines, contentW, contentH))
 }
 
 func (m *Model) renderPreview(width, height int) string {
+	contentW := contentWidth(width)
+	contentH := contentHeight(height)
 	if m.preview == nil {
-		return pane(m.focus == focusPreview, width, height).Render(headerStyle.Render("Preview") + "\n\nSelect a file to preview")
+		return pane(m.focus == focusPreview, width, height).Render(fixedBlock([]string{headerStyle.Render("Preview"), "", "Select a file to preview"}, contentW, contentH))
 	}
 	lines := []string{headerStyle.Render("Preview: " + m.preview.Title)}
 	if m.preview.Notice != "" {
 		lines = append(lines, mutedStyle.Render(m.preview.Notice))
 	}
-	lines = append(lines, m.preview.Visible(max(1, height-4))...)
-	return pane(m.focus == focusPreview, width, height).Render(strings.Join(lines, "\n"))
+	lines = append(lines, m.preview.Visible(max(1, contentH-len(lines)))...)
+	return pane(m.focus == focusPreview, width, height).Render(fixedBlock(lines, contentW, contentH))
 }
 
 func (m *Model) renderLayer(width, height int) string {
@@ -523,9 +528,10 @@ func (m *Model) renderLayer(width, height int) string {
 	headerH := 4
 	detailsH := max(7, height/3)
 	filesH := max(5, height-headerH-detailsH)
-	header := pane(false, width, headerH).Render(headerStyle.Render("Layer: "+m.currentLayer.Title) + "\n" + mutedStyle.Render(m.currentLayer.MediaType))
+	contentW := contentWidth(width)
+	header := pane(false, width, headerH).Render(fixedBlock([]string{headerStyle.Render("Layer: " + m.currentLayer.Title), mutedStyle.Render(m.currentLayer.MediaType)}, contentW, contentHeight(headerH)))
 	fileLines := []string{headerStyle.Render("Layer Files")}
-	for _, row := range visibleLayerRows(m.layerRows, m.selectedLayerRow, filesH-2) {
+	for _, row := range visibleLayerRows(m.layerRows, m.selectedLayerRow, contentHeight(filesH)-1) {
 		prefix := strings.Repeat("  ", row.depth)
 		marker := "  "
 		if row.entry.IsDir() {
@@ -538,20 +544,22 @@ func (m *Model) renderLayer(width, height int) string {
 		if m.indexOfLayer(row.entry.Path) == m.selectedLayerRow {
 			line = selectStyle.Render(line)
 		}
-		fileLines = append(fileLines, line)
+		fileLines = append(fileLines, fixedLine(line, contentW))
 	}
-	files := pane(m.focus == focusLayer, width, filesH).Render(strings.Join(fileLines, "\n"))
+	files := pane(m.focus == focusLayer, width, filesH).Render(fixedBlock(fileLines, contentW, contentHeight(filesH)))
 	detailLines := []string{"Entry Details"}
 	if len(m.layerRows) > 0 {
 		detailLines = m.layerRows[m.selectedLayerRow].entry.Details()
 	}
-	details := pane(false, width, detailsH).Render(strings.Join(detailLines, "\n"))
+	details := pane(false, width, detailsH).Render(fixedBlock(detailLines, contentW, contentHeight(detailsH)))
 	return lipgloss.JoinVertical(lipgloss.Left, header, files, details)
 }
 
 func (m *Model) renderInnerPreview(width, height int) string {
+	contentW := contentWidth(width)
+	contentH := contentHeight(height)
 	if m.innerPreview == nil {
-		return pane(m.focus == focusInnerPreview, width, height).Render("File Preview\n\nNo text file selected")
+		return pane(m.focus == focusInnerPreview, width, height).Render(fixedBlock([]string{"File Preview", "", "No text file selected"}, contentW, contentH))
 	}
 	lines := []string{headerStyle.Render("File Preview"), m.innerPreview.Title}
 	if m.innerPreview.Notice != "" {
@@ -559,8 +567,8 @@ func (m *Model) renderInnerPreview(width, height int) string {
 	} else {
 		lines = append(lines, mutedStyle.Render("Raw text"))
 	}
-	lines = append(lines, m.innerPreview.Visible(max(1, height-5))...)
-	return pane(m.focus == focusInnerPreview, width, height).Render(strings.Join(lines, "\n"))
+	lines = append(lines, m.innerPreview.Visible(max(1, contentH-len(lines)))...)
+	return pane(m.focus == focusInnerPreview, width, height).Render(fixedBlock(lines, contentW, contentH))
 }
 
 func pane(active bool, width, height int) lipgloss.Style {
@@ -568,7 +576,39 @@ func pane(active bool, width, height int) lipgloss.Style {
 	if active {
 		style = focused
 	}
-	return style.Width(max(1, width-4)).Height(max(1, height-2))
+	return style.Width(contentWidth(width)).Height(contentHeight(height)).MaxWidth(width).MaxHeight(height)
+}
+
+func contentWidth(width int) int {
+	return max(1, width-4)
+}
+
+func contentHeight(height int) int {
+	return max(1, height-2)
+}
+
+func fixedBlock(lines []string, width, height int) string {
+	if height < 1 {
+		return ""
+	}
+	out := make([]string, 0, height)
+	for _, line := range lines {
+		if len(out) == height {
+			break
+		}
+		out = append(out, fixedLine(line, width))
+	}
+	for len(out) < height {
+		out = append(out, "")
+	}
+	return strings.Join(out, "\n")
+}
+
+func fixedLine(line string, width int) string {
+	if width < 1 {
+		return ""
+	}
+	return ansi.Truncate(line, width, "…")
 }
 
 func visibleTreeRows(rows []treeRow, selected, count int) []treeRow {

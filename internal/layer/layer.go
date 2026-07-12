@@ -150,6 +150,18 @@ func (e *Entry) IsRegular() bool {
 	return e != nil && (e.Type == tar.TypeReg || e.Type == 0)
 }
 
+func (e *Entry) IsSymlink() bool {
+	return e != nil && e.Type == tar.TypeSymlink
+}
+
+func (e *Entry) IsHardlink() bool {
+	return e != nil && e.Type == tar.TypeLink
+}
+
+func (e *Entry) IsLink() bool {
+	return e.IsSymlink() || e.IsHardlink()
+}
+
 func (e *Entry) IsText() bool {
 	return e.IsRegular() && preview.IsText(e.Data)
 }
@@ -201,6 +213,8 @@ func (e *Entry) Details() []string {
 		lines = append(lines, "Chisel manifest preview is open in the right pane")
 	} else if e.IsText() {
 		lines = append(lines, "Text preview is open in the right pane")
+	} else if e.IsLink() {
+		lines = append(lines, "(link; text targets are previewed automatically, press f to follow)")
 	} else if e.IsDir() {
 		lines = append(lines, "(directory)")
 	} else {
@@ -217,4 +231,41 @@ func DisplayName(e *Entry) string {
 		return e.Name + "  whiteout"
 	}
 	return e.Name
+}
+
+func (l *Layer) ResolveLink(e *Entry) (*Entry, string, error) {
+	if l == nil || e == nil || !e.IsLink() {
+		return nil, "", errors.New("selected entry is not a link")
+	}
+	seen := map[string]bool{}
+	current := e
+	for depth := 0; depth < 32; depth++ {
+		targetPath := l.ResolveLinkPath(current)
+		if targetPath == "" {
+			return nil, "", errors.New("link target is empty")
+		}
+		if seen[targetPath] {
+			return nil, targetPath, errors.New("link target loop detected")
+		}
+		seen[targetPath] = true
+		target := l.Entries[targetPath]
+		if target == nil {
+			return nil, targetPath, errors.New("link target does not exist")
+		}
+		if !target.IsLink() {
+			return target, targetPath, nil
+		}
+		current = target
+	}
+	return nil, "", errors.New("link target resolution exceeded maximum depth")
+}
+
+func (l *Layer) ResolveLinkPath(e *Entry) string {
+	if e == nil || e.LinkName == "" {
+		return ""
+	}
+	if strings.HasPrefix(e.LinkName, "/") {
+		return cleanPath(e.LinkName)
+	}
+	return cleanPath(path.Join(path.Dir(e.Path), e.LinkName))
 }

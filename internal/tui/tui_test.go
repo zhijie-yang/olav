@@ -337,6 +337,39 @@ func TestTabWhileZoomedShowsOverlay(t *testing.T) {
 	assertViewFits(t, view, m.width, m.height)
 }
 
+func TestQWhileZoomedExitsZoomWithoutQuitting(t *testing.T) {
+	m := New(simpleLayout())
+	m.width = 80
+	m.height = 16
+	m.selectOCI(1)
+	m.focus = focusPreview
+	m.toggleZoom()
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m = updated.(Model)
+	if cmd != nil {
+		t.Fatal("expected q while zoomed not to quit")
+	}
+	if m.zoomed {
+		t.Fatal("expected q while zoomed to exit zoom")
+	}
+	if !strings.Contains(m.message, "zoom disabled") {
+		t.Fatalf("unexpected message: %q", m.message)
+	}
+}
+
+func TestCtrlCWhileZoomedStillQuits(t *testing.T) {
+	m := New(simpleLayout())
+	m.width = 80
+	m.height = 16
+	m.selectOCI(1)
+	m.focus = focusPreview
+	m.toggleZoom()
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("expected ctrl+c while zoomed to quit")
+	}
+}
+
 func TestShiftTabMovesFocusBackward(t *testing.T) {
 	m := New(simpleLayout())
 	m.width = 80
@@ -455,8 +488,96 @@ func TestNonZstdManifestWallIsNotSpecial(t *testing.T) {
 	}
 }
 
+func TestSymlinkToTextPreviewsTarget(t *testing.T) {
+	m := modelWithLayerEntries()
+	target := &layer.Entry{Name: "target", Path: "/etc/target", Type: tar.TypeReg, Data: []byte("hello target"), Parent: m.currentLayer.Root}
+	link := &layer.Entry{Name: "link", Path: "/link", Type: tar.TypeSymlink, LinkName: "/etc/target", Parent: m.currentLayer.Root}
+	addLayerEntry(m.currentLayer, target)
+	addLayerEntry(m.currentLayer, link)
+	m.rebuildLayerRows()
+	m.selectLayer(m.indexOfLayer(link.Path))
+	if m.innerPreview == nil {
+		t.Fatal("expected symlink target preview")
+	}
+	if !strings.Contains(m.innerPreview.Title, "/link -> /etc/target") {
+		t.Fatalf("unexpected preview title: %q", m.innerPreview.Title)
+	}
+	if !strings.Contains(strings.Join(m.innerPreview.PlainLines, "\n"), "hello target") {
+		t.Fatalf("unexpected preview lines: %#v", m.innerPreview.PlainLines)
+	}
+}
+
+func TestFollowSymlinkJumpsToTarget(t *testing.T) {
+	m := modelWithLayerEntries()
+	dir := &layer.Entry{Name: "etc", Path: "/etc", Type: tar.TypeDir, Parent: m.currentLayer.Root}
+	target := &layer.Entry{Name: "target", Path: "/etc/target", Type: tar.TypeReg, Data: []byte("hello"), Parent: dir}
+	link := &layer.Entry{Name: "link", Path: "/link", Type: tar.TypeSymlink, LinkName: "/etc/target", Parent: m.currentLayer.Root}
+	addLayerEntry(m.currentLayer, dir)
+	addLayerEntry(m.currentLayer, target)
+	addLayerEntry(m.currentLayer, link)
+	m.layerExpanded = map[string]bool{"/": true}
+	m.rebuildLayerRows()
+	m.focus = focusLayer
+	m.selectLayer(m.indexOfLayer(link.Path))
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m = updated.(Model)
+	if m.layerRows[m.selectedLayerRow].entry.Path != target.Path {
+		t.Fatalf("expected selection on target, got %s", m.layerRows[m.selectedLayerRow].entry.Path)
+	}
+	if !m.layerExpanded["/etc"] {
+		t.Fatal("expected target parent to be expanded")
+	}
+}
+
+func TestFollowMissingSymlinkShowsOverlay(t *testing.T) {
+	m := modelWithLayerEntries()
+	link := &layer.Entry{Name: "link", Path: "/link", Type: tar.TypeSymlink, LinkName: "/missing", Parent: m.currentLayer.Root}
+	addLayerEntry(m.currentLayer, link)
+	m.rebuildLayerRows()
+	m.focus = focusLayer
+	m.selectLayer(m.indexOfLayer(link.Path))
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m = updated.(Model)
+	view := m.View()
+	if !strings.Contains(view, "Link target does not exist: /missing") {
+		t.Fatalf("expected missing target overlay:\n%s", view)
+	}
+}
+
+func TestFStillPagesPreview(t *testing.T) {
+	m := New(simpleLayoutWithData([]byte(strings.Repeat("line\n", 40))))
+	m.width = 80
+	m.height = 16
+	m.selectOCI(1)
+	m.focus = focusPreview
+	before := m.preview.Scroll
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	m = updated.(Model)
+	if m.preview.Scroll <= before {
+		t.Fatalf("expected f to page preview, before=%d after=%d", before, m.preview.Scroll)
+	}
+}
+
 func simpleLayout() *oci.Layout {
 	return simpleLayoutWithData([]byte(`{"schemaVersion":2}`))
+}
+
+func modelWithLayerEntries() Model {
+	m := New(simpleLayout())
+	m.width = 100
+	m.height = 20
+	root := &layer.Entry{Name: "/", Path: "/", Type: tar.TypeDir}
+	m.currentLayer = &layer.Layer{Title: "layer", Root: root, Entries: map[string]*layer.Entry{"/": root}}
+	m.layerExpanded = map[string]bool{"/": true}
+	m.focus = focusLayer
+	return m
+}
+
+func addLayerEntry(l *layer.Layer, e *layer.Entry) {
+	l.Entries[e.Path] = e
+	if e.Parent != nil {
+		e.Parent.Children = append(e.Parent.Children, e)
+	}
 }
 
 func simpleLayoutWithData(data []byte) *oci.Layout {

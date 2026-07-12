@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/canonical/olav/internal/export"
@@ -59,7 +60,7 @@ type layerLoadedMsg struct {
 	err   error
 }
 
-const helpText = "Tab/Shift+Tab focus | j/k move | Space toggle/page | z zoom | / search | p pretty | w wrap | # lines | e export | q quit"
+const helpText = "Tab/Shift+Tab focus | j/k move | Space toggle/page | f follow/page | z zoom | / search | p pretty | w wrap | # lines | e export | q quit"
 
 type treeRow struct {
 	node  *oci.Node
@@ -130,10 +131,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateSearch(key), nil
 		}
 		switch key {
-		case "q", "ctrl+c":
+		case "ctrl+c":
+			return m, tea.Quit
+		case "q":
+			if m.zoomed {
+				m.zoomed = false
+				m.overlayMessage = ""
+				m.message = "preview zoom disabled"
+				break
+			}
 			return m, tea.Quit
 		case "?":
-			m.message = "Keys: Tab/Shift+Tab focus, Space toggle/page, z zoom, Enter open, h/l collapse/expand or horizontal scroll, / search, p pretty, w wrap, # lines, e export"
+			m.message = "Keys: Tab/Shift+Tab focus, Space toggle/page, f follow symlink or page preview, z zoom, q exits zoom/quits, Enter open, h/l collapse/expand or horizontal scroll, / search, p pretty, w wrap, # lines, e export"
 		case "tab":
 			if m.zoomed {
 				m.overlayMessage = "Press z again to exit zoom state."
@@ -197,7 +206,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.scrollPreview(m.previewHeight())
 			}
-		case "pgdown", "f":
+		case "f":
+			if m.focus == focusLayer {
+				m.followLayerLink()
+			} else {
+				m.scrollPreview(m.previewHeight())
+			}
+		case "pgdown":
 			m.scrollPreview(m.previewHeight())
 		case "pgup", "b":
 			m.scrollPreview(-m.previewHeight())
@@ -424,25 +439,82 @@ func (m *Model) selectLayer(i int) {
 	if e.IsText() {
 		p := preview.New(e.Path, e.Data, false)
 		m.innerPreview = &p
+		return
+	}
+	if e.IsLink() {
+		m.selectLinkPreview(e)
+	}
+}
+
+func (m *Model) selectLinkPreview(e *layer.Entry) {
+	if m.currentLayer == nil {
+		return
+	}
+	target, targetPath, err := m.currentLayer.ResolveLink(e)
+	if err != nil {
+		return
+	}
+	if target.IsChiselManifest() {
+		m.selectChiselManifestWithTitle(target, e.Path+" -> "+targetPath)
+		return
+	}
+	if target.IsText() {
+		p := preview.New(e.Path+" -> "+targetPath, target.Data, false)
+		m.innerPreview = &p
 	}
 }
 
 func (m *Model) selectChiselManifest(e *layer.Entry) {
+	m.selectChiselManifestWithTitle(e, e.Path)
+}
+
+func (m *Model) selectChiselManifestWithTitle(e *layer.Entry, title string) {
 	if m.currentLayer == nil || e == nil {
 		return
 	}
-	key := m.currentLayer.Title + ":" + e.Path
+	key := m.currentLayer.Title + ":" + title + ":" + e.Path
 	if cached := m.chiselPreviewCache[key]; cached != nil {
 		m.innerPreview = cached
 		return
 	}
-	p, err := preview.NewChiselManifest(e.Path, e.Data)
+	p, err := preview.NewChiselManifest(title, e.Data)
 	if err != nil {
 		m.message = "Failed to decompress chisel manifest: " + err.Error()
 		return
 	}
 	m.chiselPreviewCache[key] = &p
 	m.innerPreview = &p
+}
+
+func (m *Model) followLayerLink() {
+	if m.currentLayer == nil || len(m.layerRows) == 0 {
+		return
+	}
+	entry := m.layerRows[m.selectedLayerRow].entry
+	if !entry.IsLink() {
+		m.message = "selected layer item is not a link"
+		return
+	}
+	target, targetPath, err := m.currentLayer.ResolveLink(entry)
+	if err != nil {
+		if targetPath == "" {
+			targetPath = m.currentLayer.ResolveLinkPath(entry)
+		}
+		m.overlayMessage = "Link target does not exist: " + targetPath
+		m.message = err.Error()
+		return
+	}
+	m.expandLayerParents(target.Path)
+	m.rebuildLayerRows()
+	m.selectLayer(m.indexOfLayer(target.Path))
+	m.message = "followed link to " + targetPath
+}
+
+func (m *Model) expandLayerParents(p string) {
+	for dir := path.Dir(p); dir != "." && dir != "/"; dir = path.Dir(dir) {
+		m.layerExpanded[dir] = true
+	}
+	m.layerExpanded["/"] = true
 }
 
 func (m *Model) nextFocus() {
@@ -698,14 +770,14 @@ func (m *Model) toggleZoom() {
 		m.zoomed = true
 		m.zoomTarget = focusPreview
 		m.overlayMessage = ""
-		m.message = "preview zoom enabled"
+		m.message = "preview zoom enabled; press z or q to exit zoom"
 		return
 	}
 	if m.focus == focusInnerPreview && m.innerPreview != nil {
 		m.zoomed = true
 		m.zoomTarget = focusInnerPreview
 		m.overlayMessage = ""
-		m.message = "preview zoom enabled"
+		m.message = "preview zoom enabled; press z or q to exit zoom"
 		return
 	}
 	m.message = "focus a text preview to zoom"

@@ -52,6 +52,41 @@ func TestChiselManifestDetails(t *testing.T) {
 	}
 }
 
+func TestResolveSymlinkTargets(t *testing.T) {
+	l := &Layer{Entries: map[string]*Entry{}}
+	target := &Entry{Name: "target", Path: "/etc/target", Type: tar.TypeReg, Data: []byte("text")}
+	abs := &Entry{Name: "abs", Path: "/link/abs", Type: tar.TypeSymlink, LinkName: "/etc/target"}
+	rel := &Entry{Name: "rel", Path: "/etc/rel", Type: tar.TypeSymlink, LinkName: "target"}
+	l.Entries[target.Path] = target
+	l.Entries[abs.Path] = abs
+	l.Entries[rel.Path] = rel
+
+	got, targetPath, err := l.ResolveLink(abs)
+	if err != nil || got != target || targetPath != target.Path {
+		t.Fatalf("absolute resolve got entry=%v path=%q err=%v", got, targetPath, err)
+	}
+	got, targetPath, err = l.ResolveLink(rel)
+	if err != nil || got != target || targetPath != target.Path {
+		t.Fatalf("relative resolve got entry=%v path=%q err=%v", got, targetPath, err)
+	}
+}
+
+func TestResolveSymlinkErrors(t *testing.T) {
+	l := &Layer{Entries: map[string]*Entry{}}
+	missing := &Entry{Name: "missing", Path: "/missing", Type: tar.TypeSymlink, LinkName: "/nope"}
+	loopA := &Entry{Name: "a", Path: "/a", Type: tar.TypeSymlink, LinkName: "/b"}
+	loopB := &Entry{Name: "b", Path: "/b", Type: tar.TypeSymlink, LinkName: "/a"}
+	l.Entries[missing.Path] = missing
+	l.Entries[loopA.Path] = loopA
+	l.Entries[loopB.Path] = loopB
+	if _, _, err := l.ResolveLink(missing); err == nil {
+		t.Fatal("expected missing target error")
+	}
+	if _, _, err := l.ResolveLink(loopA); err == nil {
+		t.Fatal("expected loop error")
+	}
+}
+
 func openTestLayer(t *testing.T, mediaType string, data []byte) *Layer {
 	t.Helper()
 	l, err := Open("test", mediaType, data)

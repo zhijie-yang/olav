@@ -25,7 +25,8 @@ go run ./cmd/olav <oci-layout-dir-or-tarball>
 - `z`: toggle zoom for the focused preview
 - `e`: export selected file to `./olav-export/`
 - `g` / `G`: jump to top/bottom
-- `f` / `b`: page down/up in previews
+- `f`: follow selected symlink in layer file tree, or page down in previews
+- `b`: page up in previews
 - `Ctrl-D` / `Ctrl-U`: half-page down/up in previews
 - `h` / `l` or `Left` / `Right`: horizontal scroll when preview wrapping is disabled
 - `0` / `$`: jump to first/last preview column when preview wrapping is disabled
@@ -43,10 +44,12 @@ The bottom line always shows the main key help. Transient messages, search promp
 - Text previews wrap by default and can be toggled with `w`.
 - Text previews show line numbers by default and can be toggled with `#`.
 - When wrapping is disabled, use horizontal scrolling to inspect long lines.
-- Press `z` while focused on a preview pane to zoom it; press `z` again to restore the split-pane layout.
+- Press `z` while focused on a preview pane to zoom it; press `z` or `q` again to restore the split-pane layout.
 - Python, shell, and YAML files are syntax-highlighted in text previews.
 - Zstd-compressed files named `manifest.wall` inside layer tarballs are decompressed in memory and rendered as syntax-colored Chisel manifest JSONL.
 - For Chisel manifest JSONL, `p` toggles readable separator spacing while keeping each JSONL item on one line.
+- Symlinks to text files inside layer tarballs are previewed as their targets.
+- Press `f` on a symlink in the layer file tree to jump to its target when it exists.
 
 ## Layer Tarballs
 

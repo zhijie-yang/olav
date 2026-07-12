@@ -18,6 +18,34 @@ go install github.com/canonical/olav/cmd/olav@latest
 go run ./cmd/olav <oci-layout-dir-or-tarball>
 ```
 
+Image sources must use explicit transport prefixes:
+
+```sh
+olav ./oci-layout
+olav ./oci-layout.tar
+olav oci:./oci-layout
+olav oci-archive:./oci-layout.tar
+olav docker://ubuntu:24.04
+olav docker://ubuntu@sha256:<digest>
+olav --platform linux/amd64 docker://ubuntu:24.04
+olav --platform all docker://ubuntu:24.04
+olav docker-daemon:ubuntu:24.04
+```
+
+For `docker://` sources, `olav` pulls the current machine platform by default. Use `--platform os/arch` or `--platform os/arch/variant` to select a specific platform. Use `--platform all` to pull and inspect the full multi-platform image index. `--platform` is rejected for `docker-daemon:` sources.
+
+Remote and daemon images are copied into the cache as OCI layouts before opening. The cache uses `$XDG_CACHE_HOME/olav` or `~/.cache/olav`.
+
+During image copy, `olav` prints simple progress information to stderr before entering the TUI.
+
+Authentication uses the default containers/image locations:
+
+- `~/.docker/config.json`
+- `${XDG_RUNTIME_DIR}/containers/auth.json`
+- `~/.config/containers/auth.json`
+
+If authentication fails, `olav` prints a hint pointing to these paths. Login with `docker`, `podman`, or `skopeo` before retrying private images.
+
 ## Keys
 
 - `Tab` / `Shift+Tab`: switch focus forward/backward between visible panes

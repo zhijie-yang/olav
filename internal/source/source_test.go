@@ -1,0 +1,96 @@
+package source
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestResolveLocalInputs(t *testing.T) {
+	dir := t.TempDir()
+	for _, input := range []string{dir, "oci:" + dir, "oci-archive:" + dir} {
+		t.Run(input, func(t *testing.T) {
+			got, err := Resolve(context.Background(), Options{Input: input})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.LocalPath != dir {
+				t.Fatalf("LocalPath = %q, want %q", got.LocalPath, dir)
+			}
+		})
+	}
+}
+
+func TestResolveRejectsPlatformForLocalAndDaemon(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Resolve(context.Background(), Options{Input: dir, Platform: "linux/amd64"}); err == nil {
+		t.Fatal("expected local --platform rejection")
+	}
+	if _, err := Resolve(context.Background(), Options{Input: "docker-daemon:ubuntu:latest", Platform: "linux/amd64"}); err == nil {
+		t.Fatal("expected docker-daemon --platform rejection")
+	}
+}
+
+func TestResolveRejectsBareImageReference(t *testing.T) {
+	_, err := Resolve(context.Background(), Options{Input: "ubuntu:24.04"})
+	if err == nil || !strings.Contains(err.Error(), "explicit transport prefix") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCacheRootUsesXDG(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", dir)
+	root, err := cacheRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root != filepath.Join(dir, "olav") {
+		t.Fatalf("cache root = %q", root)
+	}
+}
+
+func TestCacheKeyFromLayout(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "index.json"), []byte(`{"schemaVersion":2,"manifests":[{"digest":"sha256:abc"}]}`))
+	key, digest, err := cacheKeyFromLayout(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key != "sha256-abc" || digest != "sha256:abc" {
+		t.Fatalf("key=%q digest=%q", key, digest)
+	}
+}
+
+func TestAuthHint(t *testing.T) {
+	err := withAuthHint("docker://example.com/private:latest", errors.New("unauthorized: authentication required"))
+	if !strings.Contains(err.Error(), "~/.docker/config.json") || !strings.Contains(err.Error(), "podman") {
+		t.Fatalf("expected auth hint, got %v", err)
+	}
+	plain := withAuthHint("docker://example.com/image", errors.New("connection refused"))
+	if strings.Contains(plain.Error(), "Authentication hint") {
+		t.Fatalf("did not expect auth hint: %v", plain)
+	}
+}
+
+func TestParseSourceReference(t *testing.T) {
+	if _, err := parseSourceReference("docker://ubuntu:24.04"); err != nil {
+		t.Fatalf("expected docker:// reference to parse: %v", err)
+	}
+	if _, err := parseSourceReference("docker-daemon:ubuntu:24.04"); err != nil {
+		t.Fatalf("expected docker-daemon reference to parse: %v", err)
+	}
+	if _, err := parseSourceReference("ubuntu:24.04"); err == nil {
+		t.Fatal("expected unsupported reference to fail")
+	}
+}
+
+func writeFile(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
